@@ -13,7 +13,8 @@ import (
 func main() {
 	n := maelstrom.NewNode()
 	idGen := IdGenerator{currentId: 1}
-	localNumbers := LocalNumbers{numList: make(map[float64]struct{})}
+	localNumbers := LocalNumbers{NumList: make(map[float64]struct{})}
+	// := Neighbors{List: make(map[string]struct{})}
 
 	n.Handle("echo", func(msg maelstrom.Message) error {
 		// Unmarshal the message body as an loosely-typed map.
@@ -48,7 +49,14 @@ func main() {
 			return err
 		}
 		number := body["message"].(float64)
-		localNumbers.addNumber(number)
+		if localNumbers.isNewNumber(number) {
+			localNumbers.addNumber(number)
+			for _, node := range n.NodeIDs() {
+				if node != msg.Src && node != n.ID() {
+					n.Send(node, body)
+				}
+			}
+		}
 
 		body["type"] = "broadcast_ok"
 		delete(body, "message")
@@ -72,6 +80,13 @@ func main() {
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
 			return err
 		}
+		// for k, v := range body["topology"].(map[string]interface{}) {
+		// 	if k == n.ID() {
+		// 		for _, v := range v.([]interface{}) {
+		// 			neigh.List[v.(string)] = struct{}{}
+		// 		}
+		// 	}
+		// }
 
 		body["type"] = "topology_ok"
 		delete(body, "topology")
@@ -104,21 +119,47 @@ func (i *IdGenerator) generateGlobalId(nodeId string) string {
 
 type LocalNumbers struct {
 	mu      sync.Mutex
-	numList map[float64]struct{}
+	NumList map[float64]struct{}
 }
 
 func (l *LocalNumbers) addNumber(number float64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	l.numList[number] = struct{}{}
+	l.NumList[number] = struct{}{}
 }
 
 func (l *LocalNumbers) getNumbers() []float64 {
 	l.mu.Lock()
-	result := make([]float64, len(l.numList))
+	result := make([]float64, len(l.NumList))
 	defer l.mu.Unlock()
-	for elem := range l.numList {
+	for elem := range l.NumList {
+		result = append(result, elem)
+	}
+	return result
+}
+func (l *LocalNumbers) isNewNumber(number float64) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, ok := l.NumList[number]
+	return !ok
+}
+
+type BroadcastBody struct {
+	Type    string `json:"type,omitempty"`
+	Message string `json:"message"`
+}
+
+type Neighbors struct {
+	mu   sync.Mutex
+	List map[string]struct{}
+}
+
+func (n *Neighbors) getNeighbors() []string {
+	n.mu.Lock()
+	result := make([]string, len(n.List))
+	defer n.mu.Unlock()
+	for elem := range n.List {
 		result = append(result, elem)
 	}
 	return result
